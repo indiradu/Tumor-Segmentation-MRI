@@ -1,228 +1,150 @@
 # Whole-Tumor Segmentation from Multimodal MRI
 
-A PyTorch pipeline for binary whole-tumor segmentation using the Medical Segmentation Decathlon (MSD) Task01_BrainTumour dataset. Developed for ENG2440 Medical Imaging & AI in Healthcare, the project covers volumetric preprocessing, patch-based training, full-volume reconstruction, and case-level evaluation.
+A PyTorch implementation of binary whole-tumor segmentation using the Medical Segmentation Decathlon `Task01_BrainTumour` dataset. The project was developed for ENG2440 Medical Imaging & AI in Healthcare.
 
-The main experiment compares uniform and tumor-aware patch sampling under the same training conditions. Additional experiments evaluate missing MRI modalities and sliding-window overlap.
+The notebook compares uniform and tumor-aware patch sampling with the same lightweight 3D U-Net and training budget. It includes geometry inspection, preprocessing, full-volume evaluation, three-plane error analysis, a missing-modality stress test, and a sliding-window overlap experiment.
 
-## Project structure
+## Repository files
 
 ```text
-├── ENG2440_A2_BrainTumour.ipynb   # Pipeline, experiments, figures, and analysis
-├── requirements.txt             # Pinned Python dependencies
-├── sanity_checks.py             # Synthetic software checks
-├── VERIFICATION.txt             # Verification scope and results
-├── AI_USE_DECLARATION.md         # AI assistance disclosure
-├── .gitignore                   # Exclusions for data and generated artifacts
+Tumor-Segmentation-MRI/
+├── Assignment2_Indira_Duisembayeva.ipynb  # Main implementation, outputs and discussion
+├── requirements.txt                     # Pinned Python dependencies
 └── README.md
 ```
 
-## Pipeline
+The dataset, supplied split CSV, trained checkpoints and generated run directory are not tracked in this repository. There is no separate training script or standalone test suite; the implementation and inline checks are in the notebook.
 
-1. Validate the supplied patient-level split and inspect NIfTI geometry.
-2. Resample all MRI channels and labels onto a common grid for each case.
-3. Normalize MRI intensities and extract paired image/mask patches.
-4. Train a lightweight 3D U-Net with uniform sampling, then with tumor-aware sampling.
-5. Select the model checkpoint and postprocessing configuration using validation results.
-6. Reconstruct full-volume predictions and evaluate the held-out test cases.
-7. Generate axial, coronal, and sagittal error overlays.
-8. Evaluate missing-modality robustness and sliding-window seams without retraining.
+## Dataset setup
 
-## Dataset
-
-The input consists of four co-registered MRI channels: FLAIR, T1, contrast-enhanced T1 (T1ce), and T2. Channel definitions are read from `dataset.json` and reordered explicitly. Every non-zero reference label is mapped to whole tumor; the original multiclass label files remain unchanged.
-
-Expected directory structure:
+Obtain [MSD Task01_BrainTumour](https://medicaldecathlon.com/) and the course-supplied `assignment2_split.csv` separately. Place them as follows:
 
 ```text
-Task01_BrainTumour/
-├── dataset.json
-├── assignment2_split.csv        # Also accepts: assignment2 split.csv
-├── imagesTr/
-│   ├── BRATS_001.nii.gz
-│   └── ...
-└── labelsTr/
-    ├── BRATS_001.nii.gz
-    └── ...
+Tumor-Segmentation-MRI/
+├── Assignment2_Indira_Duisembayeva.ipynb
+├── requirements.txt
+├── README.md
+└── Task01_BrainTumour/
+    ├── dataset.json
+    ├── assignment2_split.csv
+    ├── imagesTr/
+    │   └── BRATS_*.nii.gz
+    └── labelsTr/
+        └── BRATS_*.nii.gz
 ```
 
-Case filenames above are illustrative. The dataset and supplied split CSV are external dependencies and are not included in the repository.
+The notebook sets `DATA_ROOT = Path("Task01_BrainTumour")`. The split CSV must be inside that directory, not only beside the notebook. Its required columns are:
 
-The split loader preserves the supplied case membership and row order. It expects `case_id` and `split` columns, with the following supported alternatives:
+```text
+case_id,split,image_relpath,label_relpath
+```
 
-| Field | Supported columns or values |
-|---|---|
-| Case identifier | `case_id`, `case`, or `patient_id` |
-| Split | `train`, `validation`, and `test`; `val` and `valid` are accepted aliases |
-| Optional image path | `image` or `image_path` |
-| Optional label path | `label` or `label_path` |
+Image and label paths are resolved relative to `DATA_ROOT`. The supplied split contains 484 cases: 338 training, 73 validation and 73 test cases. The code uses these assignments without generating a new split and checks file existence, unique case identifiers and unique image/label paths. Test cases use the labelled files specified by this CSV, not the unlabelled challenge `imagesTs` directory.
 
-Without explicit paths, images and labels are resolved under `imagesTr/` and `labelsTr/`. Relative paths are resolved against `DATA_ROOT`; absolute paths are also supported. Case IDs can be derived from image filenames when no identifier column is present. Image and label filename stems must match the case identifiers.
-
-Missing files, duplicate case identifiers or paths, ambiguous columns, and missing split groups stop execution. NIfTI spatial units must be millimetres. Evaluation requires labelled test cases from the supplied CSV; the unlabelled MSD challenge `imagesTs` set is not used.
+Each image contains four MRI channels: FLAIR, T1, contrast-enhanced T1 (T1ce) and T2. The file channel order is read from `dataset.json` and mapped to that model input order. All non-zero reference labels are combined into one whole-tumor mask. Spatial units are required to be millimetres.
 
 ## Installation
 
-The project uses Python 3.11 or 3.12. From the project directory:
+Use Python 3.11 or 3.12. From a terminal:
 
 ```bash
-python3.12 -m venv .venv
+git clone https://github.com/indiradu/Tumor-Segmentation-MRI.git
+cd Tumor-Segmentation-MRI
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m ipykernel install --prefix .venv --name eng2440-a2 --display-name "ENG2440 A2"
+python -m jupyter lab
 ```
 
-Windows activation:
+On Windows, activate the environment with `.venv\Scripts\Activate.ps1` instead. Create the environment on the machine where computation will run; a virtual environment copied from macOS cannot be reused on a Linux HPC node.
 
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-The notebook uses CUDA when available and otherwise falls back to CPU. CUDA execution requires a compatible PyTorch installation and NVIDIA driver. Apple MPS is not enabled in this implementation.
-
-## Running the notebook
-
-Start JupyterLab from the project directory:
-
-```bash
-jupyter lab
-```
-
-Open `ENG2440_A2_BrainTumour.ipynb` with the **ENG2440 A2** kernel. The required path setting is in the setup cell:
+The notebook selects CUDA when available and otherwise uses the CPU. Check the active notebook kernel before GPU training:
 
 ```python
-DATA_ROOT = Path('/path/to/Task01_BrainTumour')
+import sys
+import torch
+
+print(sys.executable)
+print("PyTorch:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
 ```
 
-**Restart Kernel and Run All Cells** executes the workflow in this order:
+On an HPC cluster, start Jupyter within an allocated GPU job and connect the notebook to that server. An SSH connection to a login node alone does not give the notebook a GPU. The runtime must have a compatible NVIDIA driver and CUDA-enabled PyTorch installation.
 
-```text
-Setup and split validation
-→ Geometry inspection and preprocessing
-→ Uniform-sampling training
-→ Tumor-aware training
-→ Validation comparison and configuration selection
-→ Final test evaluation
-→ Three-plane error analysis
-→ Missing-modality experiment
-→ Sliding-window seam experiment
-→ Run record
-```
+## Experiment configuration
 
-Generated artifacts are written to `local_run/` in the working directory. A new run overwrites artifacts at the same paths. Input NIfTI files and the split CSV are never modified. The notebook has no automatic resume mechanism; a complete reproducible run starts from the first cell.
-
-## Default configuration
-
-| Component | Setting |
-|---|---|
+| Component | Default |
+| --- | --- |
+| Model | `SmallUNet3D`, base width 8, 85,985 parameters |
+| Input / output channels | 4 MRI channels / 1 binary-mask logit |
 | Target grid | Per-case axis-aligned RAS+, 1 mm isotropic spacing |
-| Interpolation | Linear for MRI; nearest neighbour for labels |
-| Normalization | Per-channel z-score over non-zero voxels on the target grid |
-| Spatial handling | Full field of view; high-end padding removed after inference |
-| Augmentation | Training-only paired left–right flips and intensity scaling in [0.9, 1.1] |
-| Model | 3D U-Net, two downsampling stages, base width 8, 85,985 parameters |
-| Input / output | Four MRI channels / one whole-tumor logit channel |
-| Patch size / batch size | 64 × 64 × 64 / 2 |
-| Training budget | 10 epochs × 100 optimizer steps per experiment |
+| Interpolation | Linear MRI; nearest-neighbour labels |
+| Normalization | Per-channel z-score using non-zero voxels after resampling |
+| Padding | High-end padding to at least patch size and a multiple of 4 |
+| Training augmentation | Paired left–right flips; image intensity scaling from 0.9 to 1.1 |
+| Patch / batch size | 64 × 64 × 64 / 2 |
+| Budget per sampler | 10 epochs × 100 updates = 1,000 optimizer updates |
 | Optimizer / learning rate | Adam / 0.001 |
-| Loss | 0.5 binary cross-entropy with logits + 0.5 soft Dice loss |
-| Random seed | 42 |
-| Tumor-aware sampling | 50% tumor-centred draws, 50% uniform draws |
-| Inference | 50% overlap, stride 32, equal-weight probability averaging |
-| Binary threshold | 0.5 |
+| Loss | 0.5 BCE with logits + 0.5 soft Dice loss |
+| Seed / DataLoader workers | 42 / 0 |
+| Tumor-aware sampling | 50% forced tumor-centred draws; remaining draws uniform |
+| Default inference | 50% overlap, stride 32, equal-weight probability averaging |
+| Prediction threshold | 0.5, applied after probability averaging |
 | Candidate postprocessing | Remove 6-connected components smaller than 0.10 mL |
 
-Both sampling experiments use the same initial weights, case draws, augmentation seed stream, architecture, optimizer, loss, and update count. The observed fraction of patches containing tumor is measured separately from the forced-positive sampling probability.
+The measured fraction of patches containing tumor can exceed the forced tumor-sampling probability because uniform draws can also contain tumor.
 
-Each experiment retains the checkpoint with the highest mean full-volume validation Dice, choosing the earliest epoch on ties. The final sampler is selected by validation Dice, with uniform sampling winning an exact tie. The component-removal rule is retained only when it improves validation mean Dice without reducing mean sensitivity by more than 0.01.
+## Reproducibility and model selection
 
-## Reproducibility
+Both sampling experiments reset the seed and load identical initial model weights. They use the same architecture, split, loss, optimizer, update budget, case-draw sequence and augmentation random streams. The patch-location sampling rule is the experimental difference.
 
-Python, NumPy, and PyTorch are seeded with `42`. Deterministic PyTorch algorithms are enabled, cuDNN benchmarking is disabled, and data loading uses zero worker processes. Reproducibility across different hardware or library versions is not guaranteed.
+The checkpoint with the highest mean full-volume validation Dice is retained for each sampler; the earliest epoch wins a tie. Final sampler selection uses validation Dice, with uniform sampling winning an exact tie. The component-removal rule is retained only if validation mean Dice improves and mean sensitivity decreases by no more than 0.01. These decisions are saved before final test evaluation. The bonus test experiments describe robustness and do not select a new configuration using test labels.
 
-Patient-level separation is enforced before preprocessing. Test paths are checked initially, but test arrays are opened only after the selected configuration has been saved. The test reference-volume distribution is therefore computed during final evaluation. Model selection and postprocessing decisions use validation data only.
+### Environment and run records
 
-Run metadata is recorded automatically:
-
-| File | Contents |
-|---|---|
-| `local_run/hardware.json` | Python and package versions, operating system, device, GPU name, and thread count |
-| `local_run/frozen_config.json` | Selected configuration, seed, training settings, and split-file SHA256 |
-| `local_run/run_record.json` | Hardware, configuration, experiment runtimes, and evaluation counts |
-| `local_run/tables/*_history.csv` | Per-epoch losses, validation Dice, patch statistics, and elapsed time |
-
-An exact installed-package snapshot can be exported with:
+`requirements.txt` pins dependencies, including `torch==2.6.0`; it is not an automatically captured record of every environment used to execute saved notebook outputs. To record the actual environment, run these commands from the activated environment used for the notebook:
 
 ```bash
+python --version > environment_python.txt
 python -m pip freeze > environment_actual.txt
 ```
 
-Training times include per-epoch validation. The total notebook timer includes preprocessing, experiments, evaluation, and any manual pauses. Seam-test timings measure the warmed-up inference loop, including transfers and probability aggregation, with CUDA synchronization. They exclude disk loading, preprocessing, and metric computation. Each case and overlap condition is timed once.
+For a GPU run, also record:
 
-## Evaluation
+```bash
+nvidia-smi > environment_gpu.txt
+```
 
-Metrics are calculated per case on the target grid:
+The notebook computes the split CSV's SHA256 and stores it in `selected_config.json` and `frozen_config.json`, together with selected model settings. Preserve these files, the notebook, checkpoint files and result tables together. The notebook does not automatically generate `hardware.json` or `run_record.json`.
 
-- Dice and intersection over union (IoU).
-- Tumor sensitivity and false-positive volume.
-- HD95 in millimetres.
-- Reference and predicted volume in millilitres.
-- Signed, absolute, and absolute percentage volume error.
-- Number of empty predictions.
+Results and timings can vary across hardware, driver versions and dependency versions. The overlap benchmark uses a warm-up pass and CUDA synchronization, measuring inference and probability reconstruction but excluding file loading, preprocessing and metric calculation. Each overlap condition is measured once per case, so runtime differences are descriptive rather than repeated benchmark estimates.
 
-Tumor volume is the foreground voxel count multiplied by voxel volume in mm³, divided by 1,000. HD95 is the larger of the two directed 95th-percentile distances between 6-connected surface voxels.
+## Evaluation and generated files
 
-When both masks are empty, Dice and IoU are 1 and HD95 is 0. When exactly one mask is empty, HD95 is infinite. Sensitivity and percentage volume error are undefined for an empty reference. Summaries include mean, standard deviation, median, counts of undefined/infinite values, and explicitly labelled finite-only statistics. Evaluation SD uses `ddof=0`; split-volume descriptive SD uses `ddof=1`.
+Evaluation uses complete volumes on the preprocessing target grid, with artificial padding removed. Reported metrics include Dice, IoU, sensitivity, HD95 in millimetres, false-positive volume, reference/predicted volumes, absolute volume error and absolute percentage volume error.
 
-Raw and candidate-postprocessed test results are both reported. The final method follows the validation decision. Missing-modality and overlap results are descriptive experiments and do not change the selected configuration.
-
-## Generated outputs
+Volume in millilitres is voxel count × voxel volume in mm³ / 1,000. HD95 is the larger of the two directed 95th-percentile surface distances. When exactly one mask is empty, HD95 is infinite; when both are empty, Dice and IoU are 1 and HD95 is 0. Sensitivity and percentage volume error are undefined for an empty reference. Summaries report mean, population standard deviation, median and undefined/infinite counts. Infinite values are not silently removed: infinite HD95 makes its mean infinite and its standard deviation undefined.
 
 ```text
 local_run/
-├── cache/                       # Preprocessed image and label arrays
-├── figures/                     # Geometry, learning curves, overlays, and bonus figures
-├── tables/                      # Case-wise metrics, summaries, and experiment histories
-├── probabilities/               # Reconstructed probability volumes
+├── cache/<case_id>/
+│   ├── image.npy
+│   ├── mask.npy
+│   ├── tumor_indices.npy
+│   └── geometry.json
+├── figures/                  # Saved PNG plots and overlays
+├── tables/                   # CSV histories, comparisons and case-wise metrics
+├── probabilities/            # Test probability arrays, one .npy per case
 ├── uniform_best.pt
 ├── tumor_aware_best.pt
-├── hardware.json
-├── frozen_config.json
-├── run_record.json
-├── bonus1_interpretation.txt
-└── bonus2_interpretation.txt
+├── selected_config.json
+└── frozen_config.json
 ```
 
-Preprocessed arrays are memory-mapped to avoid loading the entire cohort into RAM. The float32 image cache requires approximately 143 MB per 240 × 240 × 155 four-channel case, excluding labels and probability volumes. Full-cohort storage can reach tens of GB. Full-volume validation and the additional experiments also contribute substantially to runtime; full-data runtime and GPU memory requirements have not been measured.
-
-Dataset files, extracted arrays, caches, checkpoints, and virtual environments are excluded by `.gitignore`.
-
-## Software verification
-
-Function-level checks:
-
-```bash
-python sanity_checks.py
-```
-
-Complete synthetic workflow:
-
-```bash
-python sanity_checks.py --workflow
-```
-
-The workflow check executes every notebook code cell on eight synthetic NIfTI cases using 16³ patches, base width 4, batch size 1, two epochs, and two steps per epoch. Temporary synthetic data is removed afterward, and the notebook's default configuration is unchanged.
-
-Checks cover geometry handling, normalization, split validation, metric edge cases, physical distances and volumes, patch extraction, paired augmentation, model backpropagation, reconstruction, and both additional experiments. The recorded synthetic workflow passed. Verification details are in `VERIFICATION.txt`.
-
-The supplied notebook is unexecuted on the official dataset. Synthetic verification establishes software behavior, not segmentation performance on real MRI data.
+The full-volume float32 cache can require tens of gigabytes. Data, virtual environments and generated artifacts should remain outside Git; the repository's three tracked source/documentation files are sufficient to distribute the implementation, but reproducing an experiment also requires the original dataset and supplied split.
 
 ## Limitations
 
-The small model and training budget limit the experiment's scope. A single split and seed do not quantify variability across repeated runs, and external-site generalization has not been evaluated. Whole-tumor binarization discards subregion distinctions, while component filtering can remove genuine small lesions. The project is an educational research implementation and has not been clinically validated.
-
-## References
-
-- [Medical Segmentation Decathlon](https://medicaldecathlon.com/) and [Antonelli et al. (2022)](https://doi.org/10.1038/s41467-022-30695-9)
-- [NiBabel coordinate systems](https://nipy.org/nibabel/coordinate_systems.html) and [resampling](https://nipy.org/nibabel/reference/nibabel.processing.html)
-- [PyTorch reproducibility](https://docs.pytorch.org/docs/stable/notes/randomness.html)
-- [SciPy Euclidean distance transform](https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.distance_transform_edt.html)
+The model uses a small training budget, limited patch context, one split and one random seed. External-site validation has not been performed. Binary whole-tumor masks discard tumor-subregion distinctions, and component filtering may remove genuine small lesions. The missing-modality experiment measures sensitivity to zero-filled inputs rather than all consequences of an unavailable acquisition. Overlap comparisons on test data are descriptive and must not be used for repeated test-set tuning.
