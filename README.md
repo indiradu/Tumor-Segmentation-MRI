@@ -1,4 +1,4 @@
-# Whole-Tumor Segmentation from Multimodal MRI
+# Tumor Segmentation from Multimodal MRI
 
 A PyTorch implementation of binary whole-tumor segmentation using the Medical Segmentation Decathlon `Task01_BrainTumour` dataset. The project was developed for ENG2440 Medical Imaging & AI in Healthcare.
 
